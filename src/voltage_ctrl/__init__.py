@@ -5,7 +5,7 @@ A Python package for controlling voltage and current outputs via serial
 communication with Arduino-based DAC systems.
 """
 
-from power_supply_controller import PowerSupplyController
+from .power_supply_controller import PowerSupplyController
 
 __version__ = "0.1.0"
 __author__ = "Your Name"
