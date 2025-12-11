@@ -15,6 +15,11 @@ class VoltageController:
 
     The controller communicates with an Arduino over a serial port to set
     voltages and currents using a 12-bit DAC.
+
+    Can be used as a context manager for automatic resource cleanup:
+        with VoltageController(channels, com_port) as controller:
+            controller.set_voltages(voltages, resistance, v_max)
+        # Serial connection automatically closed and voltages zeroed
     """
 
     # DAC parameters
@@ -24,7 +29,11 @@ class VoltageController:
     CURRENT_SAFETY_FACTOR = 1.1
 
     def __init__(
-        self, channels: List[int], com_port: str = "COM3", baud_rate: int = 9600
+        self,
+        channels: List[int],
+        com_port: str = "COM3",
+        baud_rate: int = 9600,
+        zero_on_exit: bool = True,
     ):
         """
         Initialise the power supply controller.
@@ -33,14 +42,84 @@ class VoltageController:
             channels: List of channel numbers to control
             com_port: Serial port identifier (e.g., 'COM3' on Windows, '/dev/ttyUSB0' on Linux)
             baud_rate: Serial communication baud rate (default: 9600)
+            zero_on_exit: If True, set all voltages to 0V when exiting context manager (default: True)
         """
         self.channels = channels
         self.com_port = com_port
         self.baud_rate = baud_rate
+        self.zero_on_exit = zero_on_exit
         self.serial_conn: Optional[serial.Serial] = None
+        self._context_active = False
+
+    def __enter__(self):
+        """
+        Enter the context manager.
+
+        Returns:
+            self: The VoltageController instance
+        """
+        self._context_active = True
+        print(f"VoltageController context manager entered")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Exit the context manager and clean up resources.
+
+        If zero_on_exit is True, sets all channels to 0V before closing.
+        Always ensures serial connection is closed.
+
+        Args:
+            exc_type: Exception type (if an exception occurred)
+            exc_val: Exception value (if an exception occurred)
+            exc_tb: Exception traceback (if an exception occurred)
+
+        Returns:
+            False: Don't suppress exceptions
+        """
+        try:
+            if self.zero_on_exit:
+                print("\nZeroing all channels before exit...")
+                self._zero_all_channels()
+        except Exception as e:
+            print(f"Warning: Error while zeroing channels: {e}")
+        finally:
+            # Always ensure serial connection is closed
+            self._close_serial()
+            self._context_active = False
+            print("VoltageController context manager exited")
+
+        # Don't suppress any exceptions that occurred in the with block
+        return False
+
+    def _zero_all_channels(self) -> None:
+        """
+        Set all channels to 0V and minimal current limit.
+        Used for safe shutdown.
+        """
+        try:
+            self._open_serial()
+
+            for channel in self.channels:
+                # Set voltage to 0V
+                self._send_command(channel, mode=0, value=0)
+                # Set current limit to minimum
+                self._send_command(channel, mode=1, value=0)
+
+            print("All channels zeroed")
+
+        except Exception as e:
+            print(f"Error zeroing channels: {e}")
+            raise
+        finally:
+            self._close_serial()
 
     def _open_serial(self) -> None:
         """Open serial connection and initialise Arduino."""
+        # Only open if not already open
+        if self.serial_conn and self.serial_conn.is_open:
+            return
+
         print(f"\nOpening {self.com_port} at {self.baud_rate}")
 
         self.serial_conn = serial.Serial(
@@ -192,20 +271,47 @@ if __name__ == "__main__":
     # Define your channel numbers
     channels = [8, 9, 10, 11, 12, 13, 14, 15]
 
-    # Create controller instance
+    # Example 1: Using as a context manager (recommended)
+    print("\n=== Example 1: Context Manager Usage ===")
+    with VoltageController(
+        channels=channels,
+        com_port="COM3",
+        baud_rate=9600,
+    ) as controller:
+        # Display channel information
+        info = controller.get_channel_info()
+        print("\n=== Power Supply Configuration ===")
+        print(f"Channels: {info['channels']}")
+        print(f"Number of channels: {info['num_channels']}")
+        print(f"DAC resolution: {info['dac_resolution']} bits")
+        print(f"Voltage full scale: {info['voltage_full_scale']} V")
+        print(f"Voltage per bit: {info['voltage_per_bit']:.4f} V")
+
+        # Set voltages
+        voltages = [5.0, 3.3, 2.5, 1.8, 4.2, 3.0, 2.8, 3.5]
+        resistance = 50.0  # ohms
+        v_max = 10.0  # volts
+        controller.set_voltages(voltages, resistance, v_max)
+    # Voltages automatically zeroed and connection closed here
+
+    # Example 2: Traditional usage (without context manager)
+    print("\n\n=== Example 2: Traditional Usage ===")
     controller = VoltageController(channels=channels, com_port="COM3", baud_rate=9600)
 
-    # Display channel information
     info = controller.get_channel_info()
-    print("\n=== Power Supply Configuration ===")
     print(f"Channels: {info['channels']}")
-    print(f"Number of channels: {info['num_channels']}")
-    print(f"DAC resolution: {info['dac_resolution']} bits")
-    print(f"Voltage full scale: {info['voltage_full_scale']} V")
-    print(f"Voltage per bit: {info['voltage_per_bit']:.4f} V")
 
-    # Example: Set voltages (must match number of channels)
     voltages = [5.0, 3.3, 2.5, 1.8, 4.2, 3.0, 2.8, 3.5]
-    resistance = 50.0  # ohms
-    v_max = 10.0  # volts
+    resistance = 50.0
+    v_max = 10.0
     controller.set_voltages(voltages, resistance, v_max)
+    # Note: Voltages remain set, connection closed after set_voltages() completes
+
+    # Example 3: Context manager without auto-zeroing
+    print("\n\n=== Example 3: Context Manager Without Auto-Zeroing ===")
+    with VoltageController(
+        channels=channels, com_port="COM3", baud_rate=9600, zero_on_exit=False
+    ) as controller:
+        voltages = [5.0, 3.3, 2.5, 1.8, 4.2, 3.0, 2.8, 3.5]
+        controller.set_voltages(voltages, resistance=50.0, v_max=10.0)
+    # Connection closed but voltages remain set
