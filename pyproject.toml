@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "bongkokwei", email = "your.email@example.com"}
 ]
 keywords = ["power-supply", "voltage-control", "serial-communication", "arduino", "dac"]
 classifiers = [
