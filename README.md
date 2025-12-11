@@ -1,18 +1,17 @@
-# Multi-Channel Power Supply Controller
+# Multi-Channel Voltage Controller
 
 A Python class for controlling voltage and current outputs across multiple channels via serial communication with an Arduino-based DAC system.
 
 ## Overview
 
-`PowerSupplyController` provides a clean interface for setting voltages and current limits on multiple power supply channels simultaneously. It communicates with an Arduino over a serial port using a 12-bit DAC to precisely control output parameters.
+`VoltageController` provides a clean interface for setting voltages and current limits on multiple channels simultaneously. It communicates with an Arduino over a serial port using a 12-bit DAC to precisely control output parameters.
 
-This controller was originally developed for controlling thermal phase shifters in photonic integrated circuits (specifically, a 4-tap FIR filter chip), but can be adapted for any multi-channel power supply application using similar hardware.
+This controller was originally developed for controlling thermal phase shifters in photonic integrated circuits (specifically, a 4-tap FIR filter chip), but can be adapted for any multi-channel voltage supply application using similar hardware.
 
 ## Hardware Requirements
 
 - Arduino with 12-bit DAC capability
 - Serial connection (USB or RS-232)
-- Power supply hardware capable of receiving DAC control signals
 
 ## Installation
 
@@ -23,13 +22,13 @@ pip install pyserial numpy
 ## Quick Start
 
 ```python
-from power_supply_controller import PowerSupplyController
+from voltage_ctrl import VoltageController
 
 # Define your channel numbers
 channels = [8, 9, 10, 11, 12, 13, 14, 15]
 
 # Create controller instance
-controller = PowerSupplyController(
+controller = VoltageController(
     channels=channels,
     com_port='COM3',      # Use '/dev/ttyUSB0' on Linux
     baud_rate=9600
@@ -45,7 +44,7 @@ controller.set_voltages(voltages, resistance, v_max)
 
 ## Class Reference
 
-### `PowerSupplyController(channels, com_port='COM3', baud_rate=9600)`
+### `VoltageController(channels, com_port='COM3', baud_rate=9600)`
 
 Initialises the power supply controller.
 
@@ -148,7 +147,7 @@ Where:
 
 ```python
 channels = [8, 9, 10, 11, 12, 13, 14, 15]
-controller = PowerSupplyController(channels)
+controller = VoltageController(channels)
 
 # Set all channels to 3.3V
 voltages = [3.3] * len(channels)
@@ -169,7 +168,7 @@ print(f"Voltage resolution: {info['voltage_per_bit']:.4f} V/bit")
 import numpy as np
 
 channels = [8, 9, 10, 11]
-controller = PowerSupplyController(channels)
+controller = VoltageController(channels)
 
 # Create voltage gradient
 voltages = np.linspace(1.0, 5.0, len(channels))
@@ -180,12 +179,12 @@ controller.set_voltages(voltages.tolist(), resistance=100.0, v_max=6.0)
 
 ### Windows
 ```python
-controller = PowerSupplyController(channels, com_port='COM3')
+controller = VoltageController(channels, com_port='COM3')
 ```
 
 ### Linux/macOS
 ```python
-controller = PowerSupplyController(channels, com_port='/dev/ttyUSB0')
+controller = VoltageController(channels, com_port='/dev/ttyUSB0')
 ```
 
 To find your serial port:

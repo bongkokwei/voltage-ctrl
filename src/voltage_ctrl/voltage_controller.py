@@ -9,7 +9,7 @@ import numpy as np
 from typing import List, Optional
 
 
-class PowerSupplyController:
+class VoltageController:
     """
     Controls voltage and current for multiple channels via serial communication.
 
@@ -193,9 +193,7 @@ if __name__ == "__main__":
     channels = [8, 9, 10, 11, 12, 13, 14, 15]
 
     # Create controller instance
-    controller = PowerSupplyController(
-        channels=channels, com_port="COM3", baud_rate=9600
-    )
+    controller = VoltageController(channels=channels, com_port="COM3", baud_rate=9600)
 
     # Display channel information
     info = controller.get_channel_info()
