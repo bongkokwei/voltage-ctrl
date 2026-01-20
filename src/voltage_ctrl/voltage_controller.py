@@ -6,7 +6,7 @@ Controls voltage and current outputs via serial communication
 import serial
 import time
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 class VoltageController:
@@ -17,9 +17,9 @@ class VoltageController:
     voltages and currents using a 12-bit DAC.
 
     Can be used as a context manager for automatic resource cleanup:
-        with VoltageController(channels, com_port) as controller:
-            controller.set_voltages(voltages, resistance, v_max)
-        # Serial connection automatically closed and voltages zeroed
+        with VoltageController(com_port='COM3') as controller:
+            controller.set_voltages([8, 9, 10], [5.0, 3.3, 2.5], v_max=10.0)
+        # Serial connection automatically closed and channels zeroed
     """
 
     # DAC parameters
@@ -30,7 +30,6 @@ class VoltageController:
 
     def __init__(
         self,
-        channels: List[int],
         com_port: str = "COM3",
         baud_rate: int = 9600,
         zero_on_exit: bool = True,
@@ -39,17 +38,16 @@ class VoltageController:
         Initialise the power supply controller.
 
         Args:
-            channels: List of channel numbers to control
             com_port: Serial port identifier (e.g., 'COM3' on Windows, '/dev/ttyUSB0' on Linux)
             baud_rate: Serial communication baud rate (default: 9600)
             zero_on_exit: If True, set all voltages to 0V when exiting context manager (default: True)
         """
-        self.channels = channels
         self.com_port = com_port
         self.baud_rate = baud_rate
         self.zero_on_exit = zero_on_exit
         self.serial_conn: Optional[serial.Serial] = None
         self._context_active = False
+        self._active_channels: List[int] = []  # Track channels that have been used
 
     def __enter__(self):
         """
@@ -66,7 +64,7 @@ class VoltageController:
         """
         Exit the context manager and clean up resources.
 
-        If zero_on_exit is True, sets all channels to 0V before closing.
+        If zero_on_exit is True, sets all active channels to 0V before closing.
         Always ensures serial connection is closed.
 
         Args:
@@ -78,9 +76,9 @@ class VoltageController:
             False: Don't suppress exceptions
         """
         try:
-            if self.zero_on_exit:
-                print("\nZeroing all channels before exit...")
-                self._zero_all_channels()
+            if self.zero_on_exit and self._active_channels:
+                print("\nZeroing all active channels before exit...")
+                self._zero_channels(self._active_channels)
         except Exception as e:
             print(f"Warning: Error while zeroing channels: {e}")
         finally:
@@ -92,21 +90,24 @@ class VoltageController:
         # Don't suppress any exceptions that occurred in the with block
         return False
 
-    def _zero_all_channels(self) -> None:
+    def _zero_channels(self, channels: List[int]) -> None:
         """
-        Set all channels to 0V and minimal current limit.
+        Set specified channels to 0V and minimal current limit.
         Used for safe shutdown.
+
+        Args:
+            channels: List of channel numbers to zero
         """
         try:
             self._open_serial()
 
-            for channel in self.channels:
+            for channel in channels:
                 # Set voltage to 0V
                 self._send_command(channel, mode=0, value=0)
                 # Set current limit to minimum
                 self._send_command(channel, mode=1, value=0)
 
-            print("All channels zeroed")
+            print(f"Channels {channels} zeroed")
 
         except Exception as e:
             print(f"Error zeroing channels: {e}")
@@ -180,8 +181,20 @@ class VoltageController:
         dac_value = current_limit_ma / self.CURRENT_SCALE_FACTOR * self.DAC_RESOLUTION
         return int(np.floor(dac_value))
 
+    def _update_active_channels(self, channels: List[int]) -> None:
+        """
+        Update the list of active channels.
+
+        Args:
+            channels: List of channel numbers being used
+        """
+        for ch in channels:
+            if ch not in self._active_channels:
+                self._active_channels.append(ch)
+
     def set_voltages(
         self,
+        channels: List[int],
         voltages: List[float],
         v_max: float,
     ) -> None:
@@ -192,20 +205,34 @@ class VoltageController:
         has appropriate protection or you risk damaging components.
 
         Args:
+            channels: List of channel numbers to control
             voltages: List of voltages (in volts) for each channel
             v_max: Maximum allowed voltage in volts
+
+        Raises:
+            ValueError: If channels and voltages lists have different lengths
         """
-        if len(voltages) != len(self.channels):
+        if len(channels) != len(voltages):
             raise ValueError(
-                f"Expected {len(self.channels)} voltages, got {len(voltages)}"
+                f"Channels and voltages must have same length: "
+                f"got {len(channels)} channels and {len(voltages)} voltages"
             )
+
+        # Track these channels for potential zeroing on exit
+        self._update_active_channels(channels)
 
         try:
             self._open_serial()
 
-            for idx, channel in enumerate(self.channels):
-                voltage = min(voltages[idx], v_max)
-                voltage_dac = self._voltage_to_dac(voltage)
+            print(f"Setting voltages for channels {channels}...")
+            for channel, voltage in zip(channels, voltages):
+                clamped_voltage = min(voltage, v_max)
+                if voltage > v_max:
+                    print(
+                        f"Warning: voltage for channel {channel} ({voltage}V) "
+                        f"exceeds v_max ({v_max}V), clamping"
+                    )
+                voltage_dac = self._voltage_to_dac(clamped_voltage)
                 self._send_command(channel, mode=0, value=voltage_dac)
 
             self._close_serial()
@@ -217,25 +244,34 @@ class VoltageController:
 
     def set_voltages_safe(
         self,
+        channels: List[int],
         voltages: List[float],
         resistance: float,
         v_max: float,
     ) -> None:
         """
-        Set voltages for all configured channels.
+        Set voltages for specified channels with current limiting.
+
+        This is the safe version that sets appropriate current limits based on
+        the resistance and applied voltage.
 
         Args:
+            channels: List of channel numbers to control
             voltages: List of voltages (in volts) for each channel
             resistance: Load resistance in ohms (used to calculate current limit)
             v_max: Maximum allowed voltage in volts
 
         Raises:
-            ValueError: If voltages list length doesn't match number of channels
+            ValueError: If channels and voltages lists have different lengths
         """
-        if len(voltages) != len(self.channels):
+        if len(channels) != len(voltages):
             raise ValueError(
-                f"Expected {len(self.channels)} voltages, got {len(voltages)}"
+                f"Channels and voltages must have same length: "
+                f"got {len(channels)} channels and {len(voltages)} voltages"
             )
+
+        # Track these channels for potential zeroing on exit
+        self._update_active_channels(channels)
 
         # Calculate maximum current limit
         i_max = v_max / resistance * self.CURRENT_SAFETY_FACTOR
@@ -245,8 +281,8 @@ class VoltageController:
             # First connection: Set initial current limits
             self._open_serial()
 
-            print("Setting initial current limits...")
-            for channel in self.channels:
+            print(f"Setting initial current limits for channels {channels}...")
+            for channel in channels:
                 current_dac = self._current_limit_to_dac(i_max_ma)
                 self._send_command(channel, mode=1, value=current_dac)
 
@@ -255,9 +291,8 @@ class VoltageController:
             # Second connection: Set voltages and final current limits
             self._open_serial()
 
-            print("Setting voltages...")
-            for idx, channel in enumerate(self.channels):
-                voltage = voltages[idx]
+            print(f"Setting voltages for channels {channels}...")
+            for channel, voltage in zip(channels, voltages):
                 voltage_dac = self._voltage_to_dac(voltage)
 
                 # Check voltage limit
@@ -271,10 +306,10 @@ class VoltageController:
                 self._send_command(channel, mode=0, value=voltage_dac)
 
             print("Setting final current limits...")
-            for idx, channel in enumerate(self.channels):
-                voltage = min(voltages[idx], v_max)
+            for channel, voltage in zip(channels, voltages):
+                clamped_voltage = min(voltage, v_max)
                 # Current limit based on actual voltage
-                i_channel = voltage / resistance * self.CURRENT_SAFETY_FACTOR
+                i_channel = clamped_voltage / resistance * self.CURRENT_SAFETY_FACTOR
                 i_channel_ma = i_channel * 1000
                 current_dac = self._current_limit_to_dac(i_channel_ma)
                 self._send_command(channel, mode=1, value=current_dac)
@@ -288,68 +323,85 @@ class VoltageController:
             self._close_serial()
             raise
 
-    def get_channel_info(self) -> dict:
+    def get_dac_info(self) -> dict:
         """
-        Get information about channel configuration.
+        Get information about DAC configuration.
 
         Returns:
-            Dictionary with channel configuration details
+            Dictionary with DAC configuration details
         """
         return {
-            "channels": self.channels,
-            "num_channels": len(self.channels),
             "dac_resolution": self.DAC_RESOLUTION,
             "voltage_full_scale": self.VOLTAGE_FULL_SCALE,
             "voltage_per_bit": self.VOLTAGE_FULL_SCALE / self.DAC_RESOLUTION,
+            "current_scale_factor": self.CURRENT_SCALE_FACTOR,
+            "current_safety_factor": self.CURRENT_SAFETY_FACTOR,
         }
 
 
 # Example usage
 if __name__ == "__main__":
-    # Define your channel numbers
-    channels = [8, 9, 10, 11, 12, 13, 14, 15]
+    # # Example 1: Using as a context manager (recommended)
+    # print("\n=== Example 1: Context Manager Usage with Auto-Zeroing ===")
+    # with VoltageController(com_port="COM3", baud_rate=9600) as controller:
+    #     # Display DAC information
+    #     info = controller.get_dac_info()
+    #     print("\n=== Power Supply Configuration ===")
+    #     print(f"DAC resolution: {info['dac_resolution']} bits")
+    #     print(f"Voltage full scale: {info['voltage_full_scale']} V")
+    #     print(f"Voltage per bit: {info['voltage_per_bit']:.4f} V")
 
-    # Example 1: Using as a context manager (recommended)
-    print("\n=== Example 1: Context Manager Usage ===")
-    with VoltageController(
-        channels=channels,
-        com_port="COM3",
-        baud_rate=9600,
-    ) as controller:
-        # Display channel information
-        info = controller.get_channel_info()
-        print("\n=== Power Supply Configuration ===")
-        print(f"Channels: {info['channels']}")
-        print(f"Number of channels: {info['num_channels']}")
-        print(f"DAC resolution: {info['dac_resolution']} bits")
-        print(f"Voltage full scale: {info['voltage_full_scale']} V")
-        print(f"Voltage per bit: {info['voltage_per_bit']:.4f} V")
+    #     # Set voltages for specific channels
+    #     channels = [8, 9, 10, 11, 12, 13, 14, 15]
+    #     voltages = [5.0, 3.3, 2.5, 1.8, 4.2, 3.0, 2.8, 3.5]
+    #     resistance = 50.0  # ohms
+    #     v_max = 10.0  # volts
 
-        # Set voltages
-        voltages = [5.0, 3.3, 2.5, 1.8, 4.2, 3.0, 2.8, 3.5]
-        resistance = 50.0  # ohms
-        v_max = 10.0  # volts
-        controller.set_voltages(voltages, resistance, v_max)
-    # Voltages automatically zeroed and connection closed here
+    #     controller.set_voltages_safe(channels, voltages, resistance, v_max)
+    # # Voltages automatically zeroed and connection closed here
 
-    # Example 2: Traditional usage (without context manager)
-    print("\n\n=== Example 2: Traditional Usage ===")
-    controller = VoltageController(channels=channels, com_port="COM3", baud_rate=9600)
+    # # Example 2: Setting different channels at different times
+    # print("\n\n=== Example 2: Multiple Channel Sets ===")
+    # with VoltageController(com_port="COM3", baud_rate=9600) as controller:
+    #     # First set some channels
+    #     channels_1 = [8, 9, 10]
+    #     voltages_1 = [5.0, 3.3, 2.5]
+    #     controller.set_voltages_safe(
+    #         channels_1, voltages_1, resistance=50.0, v_max=10.0
+    #     )
 
-    info = controller.get_channel_info()
-    print(f"Channels: {info['channels']}")
+    #     # Later set different channels
+    #     channels_2 = [11, 12, 13]
+    #     voltages_2 = [1.8, 4.2, 3.0]
+    #     controller.set_voltages_safe(
+    #         channels_2, voltages_2, resistance=50.0, v_max=10.0
+    #     )
+    # # All channels (8-13) automatically zeroed on exit
 
-    voltages = [5.0, 3.3, 2.5, 1.8, 4.2, 3.0, 2.8, 3.5]
-    resistance = 50.0
-    v_max = 10.0
-    controller.set_voltages(voltages, resistance, v_max)
-    # Note: Voltages remain set, connection closed after set_voltages() completes
+    # # Example 3: Traditional usage (without context manager)
+    # print("\n\n=== Example 3: Traditional Usage ===")
+    # controller = VoltageController(com_port="COM3", baud_rate=9600)
 
-    # Example 3: Context manager without auto-zeroing
-    print("\n\n=== Example 3: Context Manager Without Auto-Zeroing ===")
-    with VoltageController(
-        channels=channels, com_port="COM3", baud_rate=9600, zero_on_exit=False
-    ) as controller:
-        voltages = [5.0, 3.3, 2.5, 1.8, 4.2, 3.0, 2.8, 3.5]
-        controller.set_voltages(voltages, resistance=50.0, v_max=10.0)
-    # Connection closed but voltages remain set
+    # channels = [8, 9, 10, 11]
+    # voltages = [5.0, 3.3, 2.5, 1.8]
+    # controller.set_voltages_safe(channels, voltages, resistance=50.0, v_max=10.0)
+    # # Note: Voltages remain set, connection closed after set_voltages_safe() completes
+
+    # # Example 4: Context manager without auto-zeroing
+    # print("\n\n=== Example 4: Context Manager Without Auto-Zeroing ===")
+    # with VoltageController(
+    #     com_port="COM3", baud_rate=9600, zero_on_exit=False
+    # ) as controller:
+    #     channels = [8, 9, 10]
+    #     voltages = [5.0, 3.3, 2.5]
+    #     controller.set_voltages_safe(channels, voltages, resistance=50.0, v_max=10.0)
+    # # Connection closed but voltages remain set
+
+    # Example 5: Unsafe voltage setting (no current limits)
+    print("\n\n=== Example 5: Unsafe Voltage Setting (No Current Limits) ===")
+    controller = VoltageController(com_port="COM3", baud_rate=9600)
+    channels = [8, 9]
+    voltages = [3.3, 5.0]
+    controller.set_voltages(channels, voltages, v_max=10.0)
+    controller._close_serial()
+    print("Warning: Current limits not set - ensure hardware protection is in place!")
