@@ -181,7 +181,45 @@ class VoltageController:
         return int(np.floor(dac_value))
 
     def set_voltages(
-        self, voltages: List[float], resistance: float, v_max: float
+        self,
+        voltages: List[float],
+        v_max: float,
+    ) -> None:
+        """
+        Set voltages only - no current limiting.
+
+        WARNING: This function does not set current limits. Ensure your hardware
+        has appropriate protection or you risk damaging components.
+
+        Args:
+            voltages: List of voltages (in volts) for each channel
+            v_max: Maximum allowed voltage in volts
+        """
+        if len(voltages) != len(self.channels):
+            raise ValueError(
+                f"Expected {len(self.channels)} voltages, got {len(voltages)}"
+            )
+
+        try:
+            self._open_serial()
+
+            for idx, channel in enumerate(self.channels):
+                voltage = min(voltages[idx], v_max)
+                voltage_dac = self._voltage_to_dac(voltage)
+                self._send_command(channel, mode=0, value=voltage_dac)
+
+            self._close_serial()
+            print("Voltages set!")
+
+        except Exception as e:
+            self._close_serial()
+            raise
+
+    def set_voltages_safe(
+        self,
+        voltages: List[float],
+        resistance: float,
+        v_max: float,
     ) -> None:
         """
         Set voltages for all configured channels.
