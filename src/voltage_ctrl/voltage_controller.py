@@ -146,7 +146,7 @@ class VoltageController:
 
         Args:
             channel: Channel number
-            mode: 1 for voltage, 0 for current
+            mode: 0 for voltage, 1 for current
             value: DAC value (0-4095)
         """
         command = f"s{channel} {mode} {int(value)} e"
@@ -233,7 +233,8 @@ class VoltageController:
                         f"exceeds v_max ({v_max}V), clamping"
                     )
                 voltage_dac = self._voltage_to_dac(clamped_voltage)
-                self._send_command(channel, mode=1, value=voltage_dac)
+                self._send_command(channel, mode=0, value=voltage_dac)
+                self._send_command(channel, mode=1, value=self.DAC_RESOLUTION)
 
             self._close_serial()
             print("Voltages set!")
@@ -284,7 +285,7 @@ class VoltageController:
             print(f"Setting initial current limits for channels {channels}...")
             for channel in channels:
                 current_dac = self._current_limit_to_dac(i_max_ma)
-                self._send_command(channel, mode=0, value=current_dac)
+                self._send_command(channel, mode=1, value=current_dac)
 
             self._close_serial()
 
@@ -303,7 +304,7 @@ class VoltageController:
                     voltage = v_max
                     voltage_dac = self._voltage_to_dac(v_max)
 
-                self._send_command(channel, mode=1, value=voltage_dac)
+                self._send_command(channel, mode=0, value=voltage_dac)
 
             print("Setting final current limits...")
             for channel, voltage in zip(channels, voltages):
@@ -312,7 +313,7 @@ class VoltageController:
                 i_channel = clamped_voltage / resistance * self.CURRENT_SAFETY_FACTOR
                 i_channel_ma = i_channel * 1000
                 current_dac = self._current_limit_to_dac(i_channel_ma)
-                self._send_command(channel, mode=0, value=current_dac)
+                self._send_command(channel, mode=1, value=current_dac)
 
             self._close_serial()
 
