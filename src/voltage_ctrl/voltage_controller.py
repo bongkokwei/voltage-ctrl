@@ -102,10 +102,10 @@ class VoltageController:
             self._open_serial()
 
             for channel in channels:
-                # Set voltage to 0V
-                self._send_command(channel, mode=0, value=0)
                 # Set current limit to minimum
                 self._send_command(channel, mode=1, value=0)
+                # Set voltage to 0V
+                self._send_command(channel, mode=0, value=0)
 
             print(f"Channels {channels} zeroed")
 
@@ -233,8 +233,12 @@ class VoltageController:
                         f"exceeds v_max ({v_max}V), clamping"
                     )
                 voltage_dac = self._voltage_to_dac(clamped_voltage)
+                self._send_command(
+                    channel,
+                    mode=1,
+                    value=self.DAC_RESOLUTION,
+                )  # Max current
                 self._send_command(channel, mode=0, value=voltage_dac)
-                self._send_command(channel, mode=1, value=self.DAC_RESOLUTION)
 
             self._close_serial()
             print("Voltages set!")
