@@ -103,7 +103,7 @@ class VoltageController:
 
             for channel in channels:
                 # Set current limit to minimum
-                self._send_command(channel, mode=1, value=0)
+                self._send_command(channel, mode=1, value=100)
                 # Set voltage to 0V
                 self._send_command(channel, mode=0, value=0)
 
